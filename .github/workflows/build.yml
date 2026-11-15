@@ -1,0 +1,62 @@
+name: build-hexedvoicemod
+
+# HOW TO USE: put this file in your repo at .github/workflows/build.yml, then upload ONLY the project .zip to the
+# repo root (any name, e.g. HexedVoiceMod_V1_0_1_github.zip). Every push that changes a .zip builds it automatically.
+# Result: Actions tab -> the run -> Artifacts -> HexedVoiceMod (libHexedVoiceMod.so + the menu files).
+on:
+  push:
+    paths: ['*.zip', '.github/workflows/build.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pick the newest zip and unzip it
+        run: |
+          best=""; bt=0
+          for z in *.zip; do
+            [ -f "$z" ] || continue
+            t=$(git log -1 --format=%ct -- "$z" 2>/dev/null || echo 0); t=${t:-0}
+            if [ -z "$best" ] || [ "$t" -ge "$bt" ]; then best="$z"; bt="$t"; fi
+          done
+          [ -n "$best" ] || { echo "::error::No .zip found in the repo root. Upload the project zip."; exit 1; }
+          echo "Using $best"
+          rm -rf src && mkdir src && unzip -q "$best" -d src
+          mk=$(find src -type f -name Android.mk -path '*/jni/*' | head -1)
+          [ -n "$mk" ] || { echo "::error::No jni/Android.mk inside $best - is this the right zip?"; exit 1; }
+          ROOT=$(dirname "$(dirname "$mk")")
+          echo "Project root: $ROOT"
+          echo "ROOT=$ROOT" >> "$GITHUB_ENV"
+
+      - name: Download RubberBand 4.0.0 and RNNoise v0.1.1
+        run: |
+          mkdir -p "$ROOT/jni/rubberband-src" "$ROOT/jni/rnnoise-src"
+          curl -fL https://codeload.github.com/breakfastquay/rubberband/tar.gz/refs/tags/v4.0.0 | tar xz --strip-components=1 -C "$ROOT/jni/rubberband-src"
+          curl -fL https://codeload.github.com/xiph/rnnoise/tar.gz/refs/tags/v0.1.1 | tar xz --strip-components=1 -C "$ROOT/jni/rnnoise-src"
+          ls "$ROOT/jni/rubberband-src/single/RubberBandSingle.cpp" "$ROOT/jni/rnnoise-src/src/denoise.c"
+
+      - name: Compile (ndk-build, armeabi-v7a)
+        working-directory: ${{ env.ROOT }}
+        run: |
+          $ANDROID_NDK_HOME/ndk-build NDK_PROJECT_PATH=. APP_BUILD_SCRIPT=jni/Android.mk NDK_APPLICATION_MK=jni/Application.mk -j2 2>&1 | tee "$GITHUB_WORKSPACE/ndk.log"
+          grep -q "RNNoise found" "$GITHUB_WORKSPACE/ndk.log"     || { echo "::error::RNNoise was not built in (AI noise suppression missing)"; exit 1; }
+          grep -q "RubberBand found" "$GITHUB_WORKSPACE/ndk.log"  || { echo "::error::RubberBand was not built in"; exit 1; }
+          file libs/armeabi-v7a/libHexedVoiceMod.so
+          nm -D --defined-only libs/armeabi-v7a/libHexedVoiceMod.so | grep -E '__GetModInfo|OnModLoad|vc_api|vfx_' | head
+
+      - name: Collect output
+        run: |
+          mkdir -p out
+          cp "$ROOT/libs/armeabi-v7a/libHexedVoiceMod.so" out/
+          [ -d "$ROOT/menu" ] && cp -r "$ROOT/menu" out/menu || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HexedVoiceMod
+          path: out/
