@@ -55,6 +55,8 @@ jobs:
           mkdir -p out
           cp "$ROOT/libs/armeabi-v7a/libHexedVoiceMod.so" out/
           [ -d "$ROOT/menu" ] && cp -r "$ROOT/menu" out/menu || true
+          # DeepFilterNet engine files: copy this folder to Android/data/<game>/files/HexedVoiceMod/ on the phone
+          [ -d "$ROOT/third_party/deepfilternet" ] && { mkdir -p out/HexedVoiceMod; cp "$ROOT/third_party/deepfilternet/libdf.so" "$ROOT/third_party/deepfilternet/deep_filter_mobile_model" out/HexedVoiceMod/; } || true
 
       - uses: actions/upload-artifact@v4
         with:
